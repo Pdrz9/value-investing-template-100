@@ -2,13 +2,13 @@ import streamlit as st
 import yfinance as yf
 import numpy as np
 
-st.set_page_config(page_title="Value Investing (Graham-Dodd Score)", layout="wide")
-st.title("📊 Value Investing Framework — 100 Point Score")
+st.set_page_config(page_title="Value Investing Framework", layout="wide")
+st.title("📊 Graham-Dodd Value Investing Score (100-point)")
 
-ticker_input = st.text_input("Enter a stock ticker (e.g. AAPL, TSLA, BP.L):")
+ticker_input = st.text_input("Enter a stock ticker (e.g. AAPL, VOD.L, TSLA):")
 
 def normalize_score(actual, target, weight, better_lower=True):
-    if actual is None:
+    if actual in [None, 0]:
         return 0
     try:
         score = (1 - abs(actual - target) / target) if better_lower else (actual / target)
@@ -25,22 +25,26 @@ def calculate_score(info, hist):
     }
     breakdown = {}
 
-    # Safe extraction with fallbacks
+    # Pull and calculate metrics with better fallbacks
+    price = info.get("currentPrice")
+    eps = info.get("earningsPerShare")
     pe = info.get("trailingPE") or info.get("forwardPE")
+    if not pe and price and eps:
+        try:
+            pe = price / eps
+        except:
+            pe = None
+
     pb = info.get("priceToBook")
     dividend = (info.get("dividendYield") or 0) * 100
-    market_cap = info.get("marketCap") or 0
-    roe = info.get("returnOnEquity") or 0
-    de_ratio = info.get("debtToEquity") or 0
-    current_ratio = info.get("currentRatio") or 0
-    fcf = info.get("freeCashflow") or 0
-    eps_growth = info.get("earningsQuarterlyGrowth") or 0
+    market_cap = info.get("marketCap")
+    roe = info.get("returnOnEquity")
+    de_ratio = info.get("debtToEquity")
+    current_ratio = info.get("currentRatio")
+    fcf = info.get("freeCashflow")
+    eps_growth = info.get("earningsQuarterlyGrowth")
 
-    # Calculate all scores
-    breakdown["P/E Ratio"] = round(normalize_score(pe, 15, weights["pe"], better_lower=True), 2)
-    breakdown["P/B Ratio"] = round(normalize_score(pb, 1.5, weights["pb"], better_lower=True), 2)
-    breakdown["Dividend Yield (%)"] = round(normalize_score(dividend, 2.0, weights["dividend"], better_lower=False), 2)
-    breakdown["Market Cap"] = round(normalize_score(market_cap, 2e9, weights["market_cap"], better_lower=False), 2)
+    # Compute price growth over 10 years
     price_growth_score = 0
     if not hist.empty:
         try:
@@ -48,6 +52,12 @@ def calculate_score(info, hist):
             price_growth_score = normalize_score(price_growth, 2.0, weights["price_growth"], better_lower=False)
         except:
             pass
+
+    # Score all criteria
+    breakdown["P/E Ratio"] = round(normalize_score(pe, 15, weights["pe"], better_lower=True), 2)
+    breakdown["P/B Ratio"] = round(normalize_score(pb, 1.5, weights["pb"], better_lower=True), 2)
+    breakdown["Dividend Yield (%)"] = round(normalize_score(dividend, 2.0, weights["dividend"], better_lower=False), 2)
+    breakdown["Market Cap"] = round(normalize_score(market_cap, 2e9, weights["market_cap"], better_lower=False), 2)
     breakdown["10Y Price Growth"] = round(price_growth_score, 2)
     breakdown["EPS Growth"] = round(normalize_score(eps_growth, 0.15, weights["eps_growth"], better_lower=False), 2)
     breakdown["Debt/Equity"] = round(normalize_score(de_ratio, 1.0, weights["de_ratio"], better_lower=True), 2)
@@ -56,7 +66,13 @@ def calculate_score(info, hist):
     breakdown["Free Cash Flow"] = round(normalize_score(fcf, 0, weights["fcf"], better_lower=False), 2)
 
     total_score = int(sum(breakdown.values()))
-    return total_score, breakdown
+    return total_score, breakdown, {
+        "Trailing PE": info.get("trailingPE"),
+        "Forward PE": info.get("forwardPE"),
+        "EPS": eps,
+        "Price": price,
+        "Raw Free Cash Flow": fcf
+    }
 
 if ticker_input:
     try:
@@ -67,20 +83,20 @@ if ticker_input:
         st.subheader(f"📈 {info.get('longName', ticker_input)}")
         st.write(info.get("longBusinessSummary", "No summary available."))
 
-        score, details = calculate_score(info, hist)
-        st.metric("💯 Value Score (0–100)", score)
+        score, breakdown, debug_info = calculate_score(info, hist)
+        st.metric("💯 Graham Score (0–100)", score)
 
         with st.expander("📋 Score Breakdown"):
-            for k, v in details.items():
+            for k, v in breakdown.items():
                 val_display = "N/A" if v == 0 else f"{v:.2f}"
                 st.write(f"**{k}**: {val_display}")
 
-        with st.expander("🔍 Raw Data (Debug Info)"):
-            st.json(info)
+        with st.expander("🧪 Debug Metrics"):
+            st.json(debug_info)
 
         with st.expander("📊 Price History"):
             if not hist.empty:
                 st.line_chart(hist["Close"])
 
     except Exception as e:
-        st.error(f"Error loading data: {e}")
+        st.error(f"⚠️ Error loading data for {ticker_input}: {e}")
