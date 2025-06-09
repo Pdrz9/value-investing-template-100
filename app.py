@@ -17,7 +17,7 @@ def normalize_score(actual, target, weight, better_lower=True):
     except:
         return 0
 
-def calculate_score(info, hist):
+def calculate_score(info, hist, stock):
     weights = {
         "pe": 15, "pb": 10, "dividend": 10, "market_cap": 10,
         "eps_growth": 15, "price_growth": 10, "de_ratio": 10,
@@ -25,11 +25,24 @@ def calculate_score(info, hist):
     }
     breakdown = {}
 
-    # Pull and calculate metrics with better fallbacks
+    # Pull base metrics
     price = info.get("currentPrice")
     eps = info.get("earningsPerShare")
     pe = info.get("trailingPE") or info.get("forwardPE")
-    if not pe and price and eps:
+
+    # If EPS missing or zero, try quarterly earnings EPS as fallback
+    if (eps is None or eps == 0):
+        try:
+            eps_quarterly = stock.quarterly_earnings
+            if eps_quarterly is not None and not eps_quarterly.empty:
+                eps_latest = eps_quarterly['Earnings'][-1]
+                if eps_latest and eps_latest > 0:
+                    eps = eps_latest
+        except Exception:
+            pass
+
+    # If PE still missing and EPS available, calculate manually
+    if not pe and eps and eps > 0 and price:
         try:
             pe = price / eps
         except:
@@ -69,7 +82,8 @@ def calculate_score(info, hist):
     return total_score, breakdown, {
         "Trailing PE": info.get("trailingPE"),
         "Forward PE": info.get("forwardPE"),
-        "EPS": eps,
+        "EPS (info)": info.get("earningsPerShare"),
+        "EPS (quarterly latest)": eps if eps != info.get("earningsPerShare") else "N/A",
         "Price": price,
         "Raw Free Cash Flow": fcf
     }
@@ -83,7 +97,7 @@ if ticker_input:
         st.subheader(f"📈 {info.get('longName', ticker_input)}")
         st.write(info.get("longBusinessSummary", "No summary available."))
 
-        score, breakdown, debug_info = calculate_score(info, hist)
+        score, breakdown, debug_info = calculate_score(info, hist, stock)
         st.metric("💯 Graham Score (0–100)", score)
 
         with st.expander("📋 Score Breakdown"):
